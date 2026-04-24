@@ -1,100 +1,124 @@
 // src/components/home/HomeRenderer.tsx
 
+
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { useStorefrontStore } from "@/store/useStorefrontStore";
+import { HeroBanner } from "./HeroBanner";
+import { ProductCarousel } from "./ProductCarousel";
+import { PromotionalBanner } from "./PromotionalBanner";
+import { TrustTicker } from "./TrustTicker";
+import { BrandStory } from "./BrandStory";
+import { FeaturedProducts } from "./FeaturedProducts";
+import {HomeBlogSection} from "./HomeBlogSection";
+import { CollectionsShowcase } from "./CollectionsShowcase";
+import { VideoShoppableSection } from "./VideoShoppableSection";
 
-// --- IMPORTS ---
-import { HeroBanner } from "@/components/home/HeroBanner";
-import { CategoryTabs } from "@/components/home/CategoryTabs";
-import { ProductGrid } from "@/components/home/ProductGrid";
-import { BundleBuilder } from "@/components/home/BundleBuilder";
-import { TrustBadges } from "@/components/home/TrustBadges";
-import { HomeCollections } from "@/components/home/HomeCollections";
-// 🔥 ADD THE NEW IMPORT HERE
-import HomeBlogSection from "@/components/home/HomeBlogSection";
 
-const SECTION_MAP: Record<string, React.FC<any>> = {
+// 1. REGISTRY: Maps Admin block types to your actual React components
+const SECTION_COMPONENTS: Record<string, React.FC<any>> = {
   HERO: HeroBanner,
-  CATEGORIES: CategoryTabs,
-  FEATURED_PRODUCTS: ProductGrid,
-  // BUNDLE_BUILDER: BundleBuilder,
+  COLLECTIONS: CollectionsShowcase,
+  FEATURED_PRODUCTS: FeaturedProducts,
+  PRODUCT_CAROUSEL: ProductCarousel,
+  PROMO_BANNER: PromotionalBanner,
+  TRUST_BADGES: TrustTicker,
+  BRAND_STORY: BrandStory,
   BLOG_SECTION: HomeBlogSection,
+  VIDEO_SHOPPABLE: VideoShoppableSection,
 
-  TRUST_BADGES: TrustBadges,
-  COLLECTIONS: HomeCollections,
-  // 🔥 MAP THE NEW BLOG COMPONENT
 };
 
 interface HomeRendererProps {
-  config: {
-    sectionsOrder: Array<{
-      id: string;
-      type: string;
-      settings?: any;
-    }>;
-  };
+  config: { sectionsOrder: any[] };
   data: any;
+  previewMode?: boolean;
 }
 
-export default function HomeRenderer({ config, data }: HomeRendererProps) {
-  if (!config?.sectionsOrder || !Array.isArray(config.sectionsOrder)) {
-    return (
-      <div className="flex h-64 items-center justify-center text-gray-400">
-        No homepage configuration found.
-      </div>
-    );
-  }
+export default function HomeRenderer({
+  config,
+  data,
+  previewMode = false,
+}: HomeRendererProps) {
+  const [mounted, setMounted] = useState(false);
+  const liveSections = useStorefrontStore((state) => state.sections);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Determines the proper sequence based on Admin definition
+  const sectionsToRender = previewMode && mounted ? liveSections : config?.sectionsOrder;
+
+  if (!sectionsToRender) return null;
 
   return (
-    <main className="w-full flex flex-col gap-y-8 pb-16">
-      {config.sectionsOrder.map((section) => {
-        const Component = SECTION_MAP[section.type];
+    <div
+      className={`flex flex-col gap-y-12 md:gap-y-16 bg-white ${
+        previewMode ? "min-h-full pb-16" : "min-h-screen pb-24"
+      }`}
+    >
+      {/* Maps through the exact sequence defined in the DB/Admin */}
+      {sectionsToRender
+        .filter((section: any) => section.isActive)
+        .map((section: any) => {
+          const Component = SECTION_COMPONENTS[section.type];
+          if (!Component) return null;
 
-        if (!Component) {
-          console.warn(
-            `[HomeRenderer] Missing component for section type: ${section.type}`,
+          const resolvedData = resolveData(section, data);
+
+          return (
+            <section
+              key={section.id}
+              id={section.id}
+              className="w-full px-4 md:px-0"
+            >
+              <Component
+                data={resolvedData}
+                settings={section.settings || {}}
+              />
+            </section>
           );
-          return null;
-        }
-
-        // Explicitly map the section type to the correct array from NestJS
-        let sectionData: any[] = [];
-
-        switch (section.type) {
-          case "HERO":
-            sectionData = data.banners || [];
-            break;
-          case "CATEGORIES":
-            sectionData = data.collections || [];
-            break;
-          case "FEATURED_PRODUCTS":
-            sectionData = data.featuredProducts || [];
-            break;
-          case "COLLECTIONS":
-            sectionData = data.collections || [];
-            break;
-          case "BUNDLE_BUILDER":
-            sectionData = data.featuredProducts || [];
-            break;
-
-          // 🔥 ADD THE BLOG CASE HERE
-          case "BLOG_SECTION":
-            sectionData = data.blogs || [];
-            break;
-          case "TRUST_BADGES":
-            sectionData = [];
-            break;
-        }
-
-        return (
-          <Component
-            key={section.id}
-            data={sectionData}
-            settings={section.settings}
-          />
-        );
-      })}
-    </main>
+        })}
+    </div>
   );
+}
+
+// 2. DATA RESOLVER: Ensures components get the right backend data array
+function resolveData(section: any, data: any) {
+  const settings = section.settings || {};
+  const sourceKey = settings.dataSource;
+
+  switch (section.type) {
+    case 'FEATURED_PRODUCTS':
+      return data?.featuredProducts || [];
+
+    case 'PRODUCT_CAROUSEL':
+      if (sourceKey?.startsWith('collection_')) {
+        const slug = sourceKey.replace('collection_', '');
+        const target = data.collections?.find((c: any) => c.slug === slug);
+        return target?.products?.map((p: any) => p.product || p) || [];
+      }
+      return data[sourceKey] || [];
+      
+    case 'COLLECTIONS':
+      // CollectionsShowcase fetches its own data using settings.collectionId, 
+      // but we pass the fallback collections array just in case.
+      return data?.collections || [];
+
+    case 'BLOG_SECTION':
+      return data?.blogs || [];
+
+    case 'HERO':
+    case 'PROMO_BANNER':
+      return data?.banners || [];
+
+       case "VIDEO_SHOPPABLE":
+      // The video data is stored directly in the admin block settings now!
+      return settings.slides || [];
+
+    default:
+      return null;
+  }
 }
